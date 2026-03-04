@@ -31,9 +31,3 @@
 </p>
 
 <p align="center"> <kbd>TOOLS:</kbd> Discord | Git | Selenium | Visual Stdio Code | LaTeX | Windows + WSL Debian
-
-<details align="center">
-  <summary>MY 42 STATS</summary>
-  <a href="https://profile-v3.intra.42.fr/users/treig">
-  <img src="https://badge.mediaplus.ma/darkgray/treig?1337Badge=off&UM6P=off" alt="treig's 42 stats" /></a>
-</details>
