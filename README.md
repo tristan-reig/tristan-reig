@@ -22,7 +22,7 @@
   </a>
 </p>
 
-<p align="center"> <kbd>FRAMEWORKS:</kbd> Flask | React | Spring Boot | Flutter | Tailwind
+<p align="center"> <kbd>FRAMEWORKS:</kbd> Flask | React | Flutter | Tailwind
 
 <p align="center">	
   <a href="https://skillicons.dev">
