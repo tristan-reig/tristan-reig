@@ -3,7 +3,7 @@
 ***
 <p align="center">
   <a href="mailto:mailto:treig@student.42perpignan.fr">Email</a> •
-  <a href="https://www.linkedin.com/in/tristan-reig-47639334b/">LinkedIn</a> •
+  <a href="https://www.linkedin.com/in/tristan-reig/">LinkedIn</a> •
   <a href="https://gitlab.etu.umontpellier.fr/e20230002926">Gitlab</a>
 </p>
 
