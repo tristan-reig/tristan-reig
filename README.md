@@ -9,8 +9,6 @@
 
 <p align="center">
   <img src="assets/bonsai.gif" width="340" alt="Bonsaï généré à partir de mon activité GitHub des 30 derniers jours">
-  <br>
-  <sub>Mon activité GitHub des 30 derniers jours</sub>
 </p>
 
 ***
