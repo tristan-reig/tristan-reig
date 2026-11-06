@@ -1,4 +1,4 @@
-<a href="https://github.com/tristan-reig"><img width=100% align="center" alt="tristan-reig" src="banner.png"></a>
+<a href="https://github.com/tristan-reig"><img width=100% align="center" alt="tristan-reig" src="assets/banner.png"></a>
 
 ***
 <p align="center">
@@ -8,7 +8,9 @@
 </p>
 
 <p align="center">
-  <img src="koi/koi.gif" width="256" alt="Ma koï">
+  <img src="assets/bonsai.gif" width="340" alt="Bonsaï généré à partir de mon activité GitHub des 30 derniers jours">
+  <br>
+  <sub>Mon activité GitHub des 30 derniers jours</sub>
 </p>
 
 ***
