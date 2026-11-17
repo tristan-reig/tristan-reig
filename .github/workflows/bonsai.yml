@@ -16,6 +16,7 @@ concurrency: bonsai
 
 jobs:
   bonsai:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -31,7 +32,9 @@ jobs:
           # Si secret BONSAI_PAT présent alors repos privés inclus
           # sinon activité publique seulement.
           GH_TOKEN: ${{ secrets.BONSAI_PAT || secrets.GITHUB_TOKEN }}
-        run: python bonsai/generate.py --user "${{ github.repository_owner }}" --out assets/bonsai.gif
+        run: |
+          echo "token: ${GH_TOKEN:0:4}"
+          python bonsai/generate.py --user "${{ github.repository_owner }}" --out assets/bonsai.gif
 
       - name: Commit the bonsai if it changed
         shell: bash

@@ -240,7 +240,7 @@ def lighten(hex_color: str, k: float) -> str:
 
 
 def animate(tree: Canvas, seed: str) -> list[tuple[Canvas, int]]:
-    """Renvoie la liste (image, durée en ms) d'une boucle : reflet, pause, puis les passages d'oiseaux."""
+    """Renvoie la liste d'une boucle : reflet, pause, puis les passages d'oiseaux."""
     frames: list[tuple[Canvas, int]] = []
 
     # Reflet de l'arbre
