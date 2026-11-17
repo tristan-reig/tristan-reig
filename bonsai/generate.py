@@ -50,6 +50,7 @@ QUERY = """
 query($login: String!, $from: DateTime!, $to: DateTime!) {
   user(login: $login) {
     contributionsCollection(from: $from, to: $to) {
+      restrictedContributionsCount
       contributionCalendar { totalContributions }
       commitContributionsByRepository(maxRepositories: 100) {
         contributions { totalCount }
@@ -67,6 +68,17 @@ query($login: String!, $from: DateTime!, $to: DateTime!) {
 
 
 # region Données GitHub
+def token_kind(token: str) -> str:
+    """Type de token, sans jamais afficher sa valeur."""
+    if token.startswith("ghs_"):
+        return "GITHUB_TOKEN automatique (activité publique seulement)"
+    if token.startswith("github_pat_"):
+        return "PAT fine-grained"
+    if token.startswith("ghp_"):
+        return "PAT classic"
+    return "type inconnu"
+
+
 def fetch(login: str, token: str, days: int) -> tuple[list[Repo], int, dict]:
     to = datetime.now(timezone.utc)
     frm = to - timedelta(days=days)
@@ -85,14 +97,18 @@ def fetch(login: str, token: str, days: int) -> tuple[list[Repo], int, dict]:
     cc = data["data"]["user"]["contributionsCollection"]
     repos: list[Repo] = []
     langs: dict[str, int] = {}
+    detail: list[tuple[str, bool, str, int]] = []
     private = 0
     for item in cc["commitContributionsByRepository"]:
         repo, n = item["repository"], item["contributions"]["totalCount"]
         lang = repo["primaryLanguage"] or {}
+        lang_name = lang.get("name") or "?"
         repos.append((repo["nameWithOwner"], lang.get("color") or UNKNOWN_LANG, n))
-        langs[lang.get("name") or "?"] = langs.get(lang.get("name") or "?", 0) + n
+        langs[lang_name] = langs.get(lang_name, 0) + n
+        detail.append((repo["nameWithOwner"], bool(repo["isPrivate"]), lang_name, n))
         private += repo["isPrivate"]
-    stats = {"repos": len(repos), "private_repos": private, "languages": langs}
+    stats = {"repos": len(repos), "private_repos": private, "languages": langs,
+             "restricted": cc.get("restrictedContributionsCount", 0), "detail": detail}
     return repos, cc["contributionCalendar"]["totalContributions"], stats
 
 
@@ -101,7 +117,8 @@ def demo() -> tuple[list[Repo], int, dict]:
               "OCaml": "#EF7A08", "Dart": "#00B4AB", "Java": "#B07219"}
     raw = [("demo/projet-c", "C", 22), ("demo/ml-tp", "Python", 30), ("demo/site", "JavaScript", 12),
            ("demo/interpreteur", "OCaml", 16), ("demo/app", "Dart", 9), ("demo/poo", "Java", 7)]
-    return [(n, colors[l], c) for n, l, c in raw], 96, {"repos": len(raw), "private_repos": 0}
+    return ([(n, colors[l], c) for n, l, c in raw], 96,
+            {"repos": len(raw), "private_repos": 0, "restricted": 0, "detail": []})
 # endregion
 
 
@@ -240,7 +257,7 @@ def lighten(hex_color: str, k: float) -> str:
 
 
 def animate(tree: Canvas, seed: str) -> list[tuple[Canvas, int]]:
-    """Renvoie la liste d'une boucle : reflet, pause, puis les passages d'oiseaux."""
+    """Renvoie la liste (image, durée en ms) d'une boucle : reflet, pause, puis les passages d'oiseaux."""
     frames: list[tuple[Canvas, int]] = []
 
     # Reflet de l'arbre
@@ -316,6 +333,34 @@ def save(frames: list[tuple[Canvas, int]], out: Path, scale: int) -> None:
 # endregion
 
 
+# region Diagnostic
+def report(token: str | None, days: int, contrib: int, stats: dict) -> None:
+    """Affiche ce que GitHub renvoie, pour comprendre pourquoi un repo manque."""
+    print(f"{contrib} contributions sur {days} j · {stats['repos']} repos "
+          f"(dont {stats['private_repos']} privés)")
+    if token:
+        print(f"token utilisé : {token_kind(token)}")
+    if stats.get("languages"):
+        print("langages :", ", ".join(f"{k} {v}" for k, v in sorted(stats["languages"].items(), key=lambda kv: -kv[1])))
+    restricted = stats.get("restricted", 0)
+    print(f"contributions privées non rattachées à un repo : {restricted}")
+    for name, is_private, lang, n in sorted(stats.get("detail", []), key=lambda d: -d[3]):
+        print(f"  {'privé ' if is_private else 'public'}  {n:>4} commits  {lang:<12} {name}")
+
+    if token and token.startswith("ghs_"):
+        print("ATTENTION : le secret BONSAI_PAT n'est pas lu, le GITHUB_TOKEN automatique est utilisé. "
+              "Vérifie le nom et l'emplacement du secret (Repository secrets).")
+    elif restricted > 0 and stats["private_repos"] == 0:
+        print("ATTENTION : GitHub compte des contributions privées, mais le token ne peut pas les "
+              "rattacher à un repo. Donne au token l'accès au repo privé (scope 'repo' pour un token "
+              "classic, ou Contents: Read-only + ce repo pour un fine-grained).")
+    elif restricted == 0 and stats["private_repos"] == 0:
+        print("INFO : aucune contribution privée vue. Si un repo privé devrait compter, vérifie que "
+              "les commits sont sur la branche par défaut, datent de moins de 30 jours, que le repo "
+              "n'est pas un fork et que l'e-mail git est vérifié sur GitHub.")
+# endregion
+
+
 # region Ligne de commande
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -328,18 +373,15 @@ def main() -> None:
     ap.add_argument("--seed", help="graine du hasard de l'oiseau (par défaut : login + date du jour)")
     args = ap.parse_args()
 
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if args.demo:
         repos, contrib, stats = demo()
     else:
-        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         if not args.user or not token:
             sys.exit("Il faut --user et un token dans GH_TOKEN (ou utiliser --demo).")
         repos, contrib, stats = fetch(args.user, token, args.days)
 
-    print(f"{contrib} contributions sur {args.days} j · {stats['repos']} repos "
-          f"(dont {stats['private_repos']} privés)")
-    if stats.get("languages"):
-        print("langages :", ", ".join(f"{k} {v}" for k, v in sorted(stats["languages"].items(), key=lambda kv: -kv[1])))
+    report(None if args.demo else token, args.days, contrib, stats)
     tree = draw(repos, contrib)
     seed = args.seed or f"{args.user or 'demo'}-{datetime.now(timezone.utc).date().isoformat()}"
     frames = [(tree, 0)] if args.static else animate(tree, seed)
