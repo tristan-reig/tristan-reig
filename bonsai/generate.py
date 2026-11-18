@@ -264,6 +264,23 @@ class Canvas:
             self.put(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, c)
 
 
+def pad(cv: Canvas, cx: float, cy: float, rx: float, ry: float, color: str, seed: int) -> None:
+    """Plateau de feuillage aplati : bord irrégulier, ombre dessous, reflet dessus."""
+    rng = random.Random(seed)
+    dark, light = shade(color, 0.72), lighten(color, 0.16)
+    for y in range(int(cy - ry - 2), int(cy + ry + 3)):
+        for x in range(int(cx - rx - 2), int(cx + rx + 3)):
+            nx, ny = (x - cx) / rx, (y - cy) / ry
+            if nx * nx + ny * ny > 1 + rng.uniform(-0.14, 0.04):
+                continue
+            c = dark if ny > 0.35 else (light if ny < -0.45 else color)
+            cv.put(x, y, c, leaf=True)
+    for _ in range(int(rx * ry * 0.45)):   # feuilles : petites touches claires et sombres
+        px, py = cx + rng.uniform(-rx, rx) * 0.85, cy + rng.uniform(-ry, ry) * 0.8
+        if ((px - cx) / rx) ** 2 + ((py - cy) / ry) ** 2 <= 0.8:
+            cv.put(px, py, light if py < cy else dark, leaf=True)
+
+
 def draw(repos: list[Repo], contrib: int) -> Canvas:
     cv = Canvas()
     # présentoir
@@ -311,29 +328,34 @@ def draw(repos: list[Repo], contrib: int) -> Canvas:
     maxc = max(r[2] for r in repos)
     top_y = base - trunk_h
 
-    # La cime est le repo le plus actif ; les autres repos ont chacun leur branche.
+    def size(r: float) -> tuple[float, float]:
+        return r * 1.5, r * 1.05
+
+    # La cime est le repo le plus actif ; les autres repos ont chacun leur plateau sur une branche.
     specs: list[dict] = []
-    name, _, n = repos[0]
+    name = repos[0][0]
+    rx, ry = size(2.4 + t * 3.0)
     specs.append({"name": name, "apex": True, "x0": tx(top_y), "y0": top_y, "side": 0,
-                  "x": tx(top_y), "y": top_y - 1, "r": 2.2 + t * 3.3, "hv": stable_hash(name)})
+                  "x": tx(top_y), "y": top_y - ry * 0.4, "rx": rx, "ry": ry, "hv": stable_hash(name)})
 
     # Alternance gauche/droite, hauteurs réparties régulièrement sur le tronc
     others = sorted(repos[1:], key=lambda r: stable_hash(r[0]))
     for side, group in ((-1, others[0::2]), (1, others[1::2])):
         for j, (name, _, n) in enumerate(group):
             hv = stable_hash(name)
-            frac = 0.50 if len(group) == 1 else 0.26 + 0.52 * j / (len(group) - 1)
+            frac = 0.45 if len(group) == 1 else 0.24 + 0.50 * j / (len(group) - 1)
             y0 = base - frac * trunk_h
             x0 = tx(y0)
             rel = n / maxc
-            length = max(4 + t * 2, (4 + rel * 10) * (0.55 + t * 0.6))
-            length += 4 * (j % 2) * (0.4 + t * 0.6)   # décalage pour ne pas empiler les touffes
-            slope = 0.2 + ((hv >> 12) % 35) / 100
+            length = max(5 + t * 2, (4 + rel * 9) * (0.55 + t * 0.6))
+            length += 4 * (j % 2) * (0.4 + t * 0.6)   # décalage pour étager les plateaux
+            slope = 0.1 + ((hv >> 12) % 30) / 100
+            rx, ry = size(max(2.9, (1.7 + rel * 2.2) * (0.65 + t * 0.4)))
             specs.append({"name": name, "apex": False, "x0": x0, "y0": y0, "side": side,
-                          "x": x0 + side * length, "y": y0 - length * slope,
-                          "r": max(MIN_LEAF_RADIUS, (1.4 + rel * 2.4) * (0.65 + t * 0.45)), "hv": hv})
+                          "x": x0 + side * length, "y": y0 - length * slope - ry * 0.5,
+                          "rx": rx, "ry": ry, "hv": hv})
 
-    # Les touffes qui se chevauchent sont écartées, sans changer de côté du tronc
+    # Les plateaux qui se chevauchent trop sont écartés, sans changer de côté du tronc
     for _ in range(120):
         moved = False
         for i, a in enumerate(specs):
@@ -342,55 +364,41 @@ def draw(repos: list[Repo], contrib: int) -> Canvas:
                 if wa + wb == 0:
                     continue
                 dx, dy = b["x"] - a["x"], b["y"] - a["y"]
-                d = math.hypot(dx, dy)
+                ex, ey = dx / (a["rx"] + b["rx"]), dy / (a["ry"] + b["ry"])
+                d = math.hypot(ex, ey)
                 if d < 0.01:
-                    dx, dy, d = 1.0, -0.5, math.hypot(1.0, 0.5)
-                need = (a["r"] + b["r"]) * 0.95 + 0.8
-                if d >= need:
+                    dx, dy, ex, ey, d = 1.0, -0.5, 0.5, -0.5, 0.7
+                if d >= 0.85:
                     continue
-                move = need - d
-                ux, uy = dx / d, dy / d
-                a["x"] -= ux * move * wa / (wa + wb)
-                a["y"] -= uy * move * wa / (wa + wb)
-                b["x"] += ux * move * wb / (wa + wb)
-                b["y"] += uy * move * wb / (wa + wb)
+                k = 0.85 / d - 1
+                a["x"] -= dx * k * wa / (wa + wb)
+                a["y"] -= dy * k * wa / (wa + wb)
+                b["x"] += dx * k * wb / (wa + wb)
+                b["y"] += dy * k * wb / (wa + wb)
                 moved = True
         for s in specs:
             if s["apex"]:
                 continue
-            s["x"] = min(max(s["x"], s["r"] + 1), W - s["r"] - 2)
-            s["y"] = min(max(s["y"], s["r"] + 1), min(base - 6, s["y0"] + 3))
-            if s["side"] > 0:
-                s["x"] = max(s["x"], s["x0"] + 2)
-            else:
-                s["x"] = min(s["x"], s["x0"] - 2)
+            s["x"] = min(max(s["x"], s["rx"] + 1), W - s["rx"] - 2)
+            s["y"] = min(max(s["y"], s["ry"] + 1), base - 8)
+            s["x"] = max(s["x"], s["x0"] + 3) if s["side"] > 0 else min(s["x"], s["x0"] - 3)
         if not moved:
             break
 
-    # Branches
+    # Branches : elles se terminent sous le plateau qu'elles portent
     for s in specs:
         if s["apex"]:
             continue
-        cv.line(s["x0"], s["y0"], s["x"], s["y"], BARK)
+        ex, ey = s["x"], s["y"] + s["ry"] * 0.25
+        mx, my = (s["x0"] + ex) / 2, (s["y0"] + ey) / 2 - 1.5      # léger arc
+        cv.line(s["x0"], s["y0"], mx, my, BARK)
+        cv.line(mx, my, ex, ey, BARK)
         if thick >= 2:   # base de la branche plus épaisse
-            cv.line(s["x0"], s["y0"] + 1, s["x0"] + (s["x"] - s["x0"]) * 0.5,
-                    s["y0"] + 1 + (s["y"] - s["y0"]) * 0.5, BARK)
+            cv.line(s["x0"], s["y0"] + 1, mx, my + 1, BARK)
 
-    # Contour sombre de chaque touffe (dessiné avant tous les feuillages : séparation nette)
-    specs.sort(key=lambda s: -s["r"])   # grosses touffes d'abord, petites par-dessus
-    for s in specs:
-        cv.disc(s["x"], s["y"], s["r"] + 1.0, shade(final[s["name"]], 0.4))
-    # Feuillages
-    for s in specs:
-        color = final[s["name"]]
-        cv.disc(s["x"], s["y"], s["r"], color, leaf=True)
-        rng = random.Random(s["hv"])
-        dark = shade(color)
-        for _ in range(int(s["r"] * 3)):
-            px = s["x"] + rng.uniform(-s["r"], s["r"])
-            py = s["y"] + rng.uniform(0, s["r"]) * 0.9
-            if (px - s["x"]) ** 2 + (py - s["y"]) ** 2 <= s["r"] ** 2:
-                cv.put(px, py, dark, leaf=True)
+    # Plateaux de feuillage : du haut vers le bas, les étages du bas passent devant
+    for s in sorted(specs, key=lambda s: s["y"]):
+        pad(cv, s["x"], s["y"], s["rx"], s["ry"], final[s["name"]], s["hv"])
     return cv
 # endregion
 
