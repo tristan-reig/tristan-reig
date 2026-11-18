@@ -27,24 +27,12 @@ jobs:
 
       - run: pip install -r bonsai/requirements.txt
 
-      - name: Test accès ft-minecraft
-        env:
-          GH_TOKEN: ${{ secrets.BONSAI_PAT }}
-        run: |
-          curl -s -o /dev/null -w "HTTP %{http_code}\n" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            https://api.github.com/repos/tristan-reig/ft-minecraft
-          curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/tristan-reig/ft-minecraft/commits?since=$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)&per_page=100" \
-            | grep '"email"' | sort | uniq -c
-
       - name: Draw the bonsai
         env:
           # Si secret BONSAI_PAT présent alors repos privés inclus
           # sinon activité publique seulement.
           GH_TOKEN: ${{ secrets.BONSAI_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          echo "token: ${GH_TOKEN:0:4}"
           python bonsai/generate.py --user "${{ github.repository_owner }}" --out assets/bonsai.gif
 
       - name: Commit the bonsai if it changed
