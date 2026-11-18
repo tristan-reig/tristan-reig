@@ -7,6 +7,7 @@ import math
 import os
 import random
 import sys
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +24,17 @@ STAND, STAND_DARK = "#8B6A4E", "#6B4F3B"
 UNKNOWN_LANG = "#8B949E"
 MIN_LUMINANCE = 0.12
 MIN_LEAF_RADIUS = 2.2
+
+# Couleurs des langages pour les repos privés trouvés via l'API REST
+# (l'API REST ne renvoie pas les couleurs, contrairement à GraphQL).
+LANG_COLORS = {
+    "Java": "#B07219", "Python": "#3572A5", "JavaScript": "#F1E05A", "TypeScript": "#3178C6",
+    "C": "#555555", "C++": "#F34B7D", "C#": "#178600", "Lua": "#000080", "OCaml": "#EF7A08",
+    "Dart": "#00B4AB", "HTML": "#E34C26", "CSS": "#563D7C", "SCSS": "#C6538C",
+    "Shell": "#89E051", "Makefile": "#427819", "Dockerfile": "#384D54", "Rust": "#DEA584",
+    "Go": "#00ADD8", "Kotlin": "#A97BFF", "Swift": "#F05138", "PHP": "#4F5D95",
+    "Ruby": "#701516", "Vue": "#41B883", "Jupyter Notebook": "#DA5B0B", "TeX": "#3D6117",
+}
 
 FRAME_MS = 80                 # durée d'une image de l'animation
 BIRD_PASSES = 3               # passages d'oiseau par boucle
@@ -79,6 +91,63 @@ def token_kind(token: str) -> str:
     return "type inconnu"
 
 
+def rest(path: str, token: str):
+    req = urllib.request.Request(
+        "https://api.github.com" + path,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+                 "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "github-bonsai"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def count_commits(full_name: str, login: str, since: str, token: str) -> int:
+    """Commits de `login` sur la branche par défaut depuis `since` (comme le compteur de GitHub)."""
+    n = 0
+    for page in range(1, 6):
+        try:
+            batch = rest(f"/repos/{full_name}/commits?author={login}&since={since}"
+                         f"&per_page=100&page={page}", token)
+        except urllib.error.HTTPError:
+            return n   # ex. 409 : repo vide
+        n += len(batch)
+        if len(batch) < 100:
+            break
+    return n
+
+
+def private_activity(login: str, token: str, frm: datetime,
+                     known: set[str]) -> list[tuple[str, bool, str, int]]:
+    """Repli REST : liste les repos privés visibles par le token et compte les commits récents.
+
+    GraphQL masque parfois ces repos (« contributions privées non rattachées »),
+    alors que l'API REST y a accès avec le même token.
+    """
+    since = frm.strftime("%Y-%m-%dT%H:%M:%SZ")
+    found: list[tuple[str, bool, str, int]] = []
+    try:
+        repos: list[dict] = []
+        for page in range(1, 6):
+            batch = rest("/user/repos?visibility=private&sort=pushed&per_page=100&page=" + str(page)
+                         + "&affiliation=owner,collaborator,organization_member", token)
+            repos += batch
+            if len(batch) < 100:
+                break
+        for r in repos:
+            name = r["full_name"]
+            if r.get("fork") or name in known:
+                continue
+            pushed = r.get("pushed_at")
+            if pushed and datetime.fromisoformat(pushed.replace("Z", "+00:00")) < frm:
+                continue
+            n = count_commits(name, login, since, token)
+            if n > 0:
+                found.append((name, True, r.get("language") or "?", n))
+    except (urllib.error.HTTPError, urllib.error.URLError) as e:
+        print(f"AVERTISSEMENT : repli REST impossible ({e}). "
+              "Le token a-t-il le scope 'repo' (classic) ?")
+    return found
+
+
 def fetch(login: str, token: str, days: int) -> tuple[list[Repo], int, dict]:
     to = datetime.now(timezone.utc)
     frm = to - timedelta(days=days)
@@ -107,8 +176,18 @@ def fetch(login: str, token: str, days: int) -> tuple[list[Repo], int, dict]:
         langs[lang_name] = langs.get(lang_name, 0) + n
         detail.append((repo["nameWithOwner"], bool(repo["isPrivate"]), lang_name, n))
         private += repo["isPrivate"]
+
+    # Repli REST pour les repos privés que GraphQL ne détaille pas
+    extra = private_activity(login, token, frm, {d[0] for d in detail})
+    for name, is_private, lang_name, n in extra:
+        repos.append((name, LANG_COLORS.get(lang_name, UNKNOWN_LANG), n))
+        langs[lang_name] = langs.get(lang_name, 0) + n
+        detail.append((name, is_private, lang_name, n))
+        private += 1
+
     stats = {"repos": len(repos), "private_repos": private, "languages": langs,
-             "restricted": cc.get("restrictedContributionsCount", 0), "detail": detail}
+             "restricted": cc.get("restrictedContributionsCount", 0), "detail": detail,
+             "rest_private": len(extra)}
     return repos, cc["contributionCalendar"]["totalContributions"], stats
 
 
@@ -351,9 +430,12 @@ def report(token: str | None, days: int, contrib: int, stats: dict) -> None:
         print("ATTENTION : le secret BONSAI_PAT n'est pas lu, le GITHUB_TOKEN automatique est utilisé. "
               "Vérifie le nom et l'emplacement du secret (Repository secrets).")
     elif restricted > 0 and stats["private_repos"] == 0:
-        print("ATTENTION : GitHub compte des contributions privées, mais le token ne peut pas les "
-              "rattacher à un repo. Donne au token l'accès au repo privé (scope 'repo' pour un token "
-              "classic, ou Contents: Read-only + ce repo pour un fine-grained).")
+        print("ATTENTION : GitHub compte des contributions privées, mais ni GraphQL ni le repli REST "
+              "n'en trouvent. Le token n'a probablement pas le scope 'repo' (classic), ou les repos "
+              "sont dans une organisation à autoriser via SSO.")
+    elif stats.get("rest_private"):
+        print(f"INFO : {stats['rest_private']} repo(s) privé(s) trouvé(s) via l'API REST "
+              "(GraphQL ne les détaillait pas).")
     elif restricted == 0 and stats["private_repos"] == 0:
         print("INFO : aucune contribution privée vue. Si un repo privé devrait compter, vérifie que "
               "les commits sont sur la branche par défaut, datent de moins de 30 jours, que le repo "
