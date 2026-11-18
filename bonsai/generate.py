@@ -280,7 +280,7 @@ def draw(repos: list[Repo], contrib: int) -> Canvas:
     for x in range(22, 46):
         cv.put(x, 40, POT_TOP)
 
-    repos = sorted((r for r in repos if r[2] > 0), key=lambda r: -r[2])[:MAX_BRANCHES]
+    repos = sorted((r for r in repos if r[2] > 0), key=lambda r: (-r[2], r[0]))[:MAX_BRANCHES]
     t = min(math.log10(1 + max(contrib, 0)) / math.log10(1 + ADULT_CONTRIB), 1.0)
     trunk_h = 4 + t * 26
     thick = 1 + int(t * 3.2)
@@ -295,36 +295,102 @@ def draw(repos: list[Repo], contrib: int) -> Canvas:
         for k in range(w):
             cv.put(tx(y) - w // 2 + k, y, BARK)
 
-    maxc = max([r[2] for r in repos] + [1])
-    tips: list[tuple[float, float, float, str, int]] = []
-    used: set[int] = set()
-    for name, color, n in sorted(repos, key=lambda r: stable_hash(r[0])):
-        hv = stable_hash(name)
-        slot = hv % MAX_BRANCHES
-        while slot in used:
-            slot = (slot + 5) % MAX_BRANCHES
-        used.add(slot)
-        frac = 0.32 + (slot // 2) * 0.11
-        side = 1 if slot % 2 else -1
-        slope = 0.25 + ((hv >> 12) % 35) / 100
-        y0 = base - frac * trunk_h
-        x0 = tx(y0)
-        rel = n / maxc
-        length = (2 + rel * 9) * (0.45 + t * 0.75)
-        x1, y1 = x0 + side * length, y0 - length * slope
-        cv.line(x0, y0, x1, y1, BARK)
-        tips.append((x1, y1, max(MIN_LEAF_RADIUS, (1.2 + rel * 2.8) * (0.6 + t * 0.5)), color, hv))
-    if repos:
-        top = repos[0]
-        tips.append((tx(base - trunk_h), base - trunk_h - 1, 1.5 + t * 4, top[1], stable_hash(top[0])))
+    if not repos:
+        return cv
 
-    for x, y, r, color, hv in tips:
-        rng = random.Random(hv)
-        color = readable(color)
-        cv.disc(x, y, r, color, leaf=True)
+    # Couleurs : deux repos de même langage reçoivent deux nuances différentes
+    seen: dict[str, int] = {}
+    final: dict[str, str] = {}
+    for name, color, _ in repos:
+        c = readable(color)
+        k = seen.get(c, 0)
+        seen[c] = k + 1
+        variants = [c, lighten(c, 0.35), shade(c, 0.7), lighten(c, 0.6), shade(c, 0.5)]
+        final[name] = variants[min(k, len(variants) - 1)]
+
+    maxc = max(r[2] for r in repos)
+    top_y = base - trunk_h
+
+    # La cime est le repo le plus actif ; les autres repos ont chacun leur branche.
+    specs: list[dict] = []
+    name, _, n = repos[0]
+    specs.append({"name": name, "apex": True, "x0": tx(top_y), "y0": top_y, "side": 0,
+                  "x": tx(top_y), "y": top_y - 1, "r": 2.2 + t * 3.3, "hv": stable_hash(name)})
+
+    # Alternance gauche/droite, hauteurs réparties régulièrement sur le tronc
+    others = sorted(repos[1:], key=lambda r: stable_hash(r[0]))
+    for side, group in ((-1, others[0::2]), (1, others[1::2])):
+        for j, (name, _, n) in enumerate(group):
+            hv = stable_hash(name)
+            frac = 0.50 if len(group) == 1 else 0.26 + 0.52 * j / (len(group) - 1)
+            y0 = base - frac * trunk_h
+            x0 = tx(y0)
+            rel = n / maxc
+            length = max(4 + t * 2, (4 + rel * 10) * (0.55 + t * 0.6))
+            length += 4 * (j % 2) * (0.4 + t * 0.6)   # décalage pour ne pas empiler les touffes
+            slope = 0.2 + ((hv >> 12) % 35) / 100
+            specs.append({"name": name, "apex": False, "x0": x0, "y0": y0, "side": side,
+                          "x": x0 + side * length, "y": y0 - length * slope,
+                          "r": max(MIN_LEAF_RADIUS, (1.4 + rel * 2.4) * (0.65 + t * 0.45)), "hv": hv})
+
+    # Les touffes qui se chevauchent sont écartées, sans changer de côté du tronc
+    for _ in range(120):
+        moved = False
+        for i, a in enumerate(specs):
+            for b in specs[i + 1:]:
+                wa, wb = (0 if a["apex"] else 1), (0 if b["apex"] else 1)
+                if wa + wb == 0:
+                    continue
+                dx, dy = b["x"] - a["x"], b["y"] - a["y"]
+                d = math.hypot(dx, dy)
+                if d < 0.01:
+                    dx, dy, d = 1.0, -0.5, math.hypot(1.0, 0.5)
+                need = (a["r"] + b["r"]) * 0.95 + 0.8
+                if d >= need:
+                    continue
+                move = need - d
+                ux, uy = dx / d, dy / d
+                a["x"] -= ux * move * wa / (wa + wb)
+                a["y"] -= uy * move * wa / (wa + wb)
+                b["x"] += ux * move * wb / (wa + wb)
+                b["y"] += uy * move * wb / (wa + wb)
+                moved = True
+        for s in specs:
+            if s["apex"]:
+                continue
+            s["x"] = min(max(s["x"], s["r"] + 1), W - s["r"] - 2)
+            s["y"] = min(max(s["y"], s["r"] + 1), min(base - 6, s["y0"] + 3))
+            if s["side"] > 0:
+                s["x"] = max(s["x"], s["x0"] + 2)
+            else:
+                s["x"] = min(s["x"], s["x0"] - 2)
+        if not moved:
+            break
+
+    # Branches
+    for s in specs:
+        if s["apex"]:
+            continue
+        cv.line(s["x0"], s["y0"], s["x"], s["y"], BARK)
+        if thick >= 2:   # base de la branche plus épaisse
+            cv.line(s["x0"], s["y0"] + 1, s["x0"] + (s["x"] - s["x0"]) * 0.5,
+                    s["y0"] + 1 + (s["y"] - s["y0"]) * 0.5, BARK)
+
+    # Contour sombre de chaque touffe (dessiné avant tous les feuillages : séparation nette)
+    specs.sort(key=lambda s: -s["r"])   # grosses touffes d'abord, petites par-dessus
+    for s in specs:
+        cv.disc(s["x"], s["y"], s["r"] + 1.0, shade(final[s["name"]], 0.4))
+    # Feuillages
+    for s in specs:
+        color = final[s["name"]]
+        cv.disc(s["x"], s["y"], s["r"], color, leaf=True)
+        rng = random.Random(s["hv"])
         dark = shade(color)
-        for _ in range(int(r * 3)):
-            cv.put(x + rng.uniform(-r, r), y + rng.uniform(0, r) * 0.9, dark, leaf=True)
+        for _ in range(int(s["r"] * 3)):
+            px = s["x"] + rng.uniform(-s["r"], s["r"])
+            py = s["y"] + rng.uniform(0, s["r"]) * 0.9
+            if (px - s["x"]) ** 2 + (py - s["y"]) ** 2 <= s["r"] ** 2:
+                cv.put(px, py, dark, leaf=True)
     return cv
 # endregion
 
