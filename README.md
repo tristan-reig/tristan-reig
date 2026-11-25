@@ -1,4 +1,4 @@
-<a href="https://github.com/tristan-reig"><img width=100% align="center" alt="tristan-reig" src="assets/banner.png"></a>
+<a href="https://github.com/tristan24217"><img width=100% align="center" alt="tristan24217" src="assets/banner.png"></a>
 
 ***
 <p align="center">
