@@ -2,12 +2,6 @@
 
 ***
 <p align="center">
-  <a href="mailto:treig@student.42perpignan.fr">Email</a> •
-  <a href="https://www.linkedin.com/in/tristan-reig/">LinkedIn</a> •
-  <a href="https://gitlab.etu.umontpellier.fr/e20230002926">Gitlab</a>
-</p>
-
-<p align="center">
   <img src="assets/bonsai.gif" width="340" alt="Bonsaï généré à partir de mon activité GitHub des 30 derniers jours">
 </p>
 
